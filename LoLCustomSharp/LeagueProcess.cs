@@ -1,0 +1,205 @@
+﻿using System;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
+
+namespace LoLCustomSharp
+{
+    public class LeagueProcess : IDisposable
+    {
+        private const uint PROCESS_VM_OPERATION = 0x0008;
+        private const uint PROCESS_VM_READ = 0x0010;
+        private const uint PROCESS_VM_WRITE = 0x0020;
+        private const uint PROCESS_QUERY_INFORMATION = 0x0400;
+        private const uint SYNCHRONIZE = 0x00100000;
+
+        private const uint INFINITE = 0xFFFFFFFF;
+
+        private const uint PAGE_EXECUTE = 0x10;
+        private const uint PAGE_READWRITE = 0x04;
+
+        private const uint MEM_COMMIT = 0x00001000;
+        private const uint MEM_RESERVE = 0x00002000;
+
+        [DllImport("kernel32.dll")]
+        private static extern int OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(int hProcess);
+
+
+        [DllImport("kernel32.dll")]
+        private static extern bool ReadProcessMemory(int hProcess, uint lpBaseAddress, byte[] lpBuffer, int dwSize, out uint lpNumberOfBytesRead);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool WriteProcessMemory(int hProcess, uint lpBaseAddress, byte[] lpBuffer, int dwSize, out uint lpNumberOfBytesWritten);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool VirtualProtectEx(int hProcess, uint lpAddress, int dwSize, uint flNewProtect, out int lpflOldProtect);
+
+        [DllImport("kernel32.dll")]
+        private static extern uint VirtualAllocEx(int hProcess, uint lpBaseAddress, int dwSize, uint flAllocationType, uint flProtect);
+
+        [DllImport("kernel32.dll")]
+        private static extern int WaitForSingleObject(int hProcess, uint miliseconds);
+
+        private int hProcess;
+        private uint _moduleBase;
+        private int _moduleSize;
+
+        public LeagueProcess(Process process)
+        {
+            hProcess = 0;
+            _moduleBase = (uint)process.MainModule.BaseAddress;
+            _moduleSize = process.MainModule.ModuleMemorySize;
+
+            var pid = (uint)process.Id;
+            hProcess = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION | SYNCHRONIZE, false, pid);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (hProcess != 0 && hProcess != -1)
+            {
+                CloseHandle(hProcess);
+                hProcess = 0;
+            }
+        }
+
+        ~LeagueProcess()
+        {
+            Dispose(false);
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+        }
+
+        internal uint Base => _moduleBase;
+
+        internal byte[] Dump()
+        {
+            var data = new byte[80 * 1024 * 1024];
+            var buffer = new byte[0x1000];
+            var baseAddress = Base;
+            for(var i = 0; i < data.Length; i += buffer.Length)
+            {
+                ReadProcessMemory(hProcess, baseAddress + (uint)i, buffer, buffer.Length, out uint _);
+                Buffer.BlockCopy(buffer, 0, data, i, buffer.Length);
+            }
+            return data;
+        }
+
+        internal byte[] ReadMemory(uint address, int size)
+        {
+            var buffer = new byte[size];
+            if (!ReadProcessMemory(hProcess, address, buffer, size, out uint _))
+            {
+                throw new IOException("Failed to read memory!");
+            }
+            return buffer;
+        }
+
+        internal void WriteMemory(uint address, byte[] buffer)
+        {
+            if (!WriteProcessMemory(hProcess, address, buffer, buffer.Length, out uint _))
+            {
+                throw new IOException("Failed to write memory");
+            }
+        }
+
+        internal void MarkMemoryExecutable(uint address, int size)
+        {
+            if (!VirtualProtectEx(hProcess, address, size, PAGE_EXECUTE, out int _))
+            {
+                throw new IOException("Failed to mark region as executable");
+            }
+        }
+
+        internal uint AllocateMemory(int size)
+        {
+            var ptr = VirtualAllocEx(hProcess, 0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+            if (ptr == 0)
+            {
+                throw new IOException("Failed to allocate memory");
+            }
+            return ptr;
+        }
+
+        public void WaitForExit()
+        {
+            WaitForSingleObject(hProcess, INFINITE);
+        }
+
+        internal uint WaitPointerNonZero(uint address)
+        {
+            var buffer = new byte[4];
+            do
+            {
+                Thread.Sleep(1);
+                if(!ReadProcessMemory(hProcess, address, buffer, 4, out uint _))
+                {
+                    throw new IOException("Failed to read pointer");
+                }
+            } while (buffer[0] == 0 && buffer[1] == 0 && buffer[2] == 0 && buffer[3] == 0);
+            return BitConverter.ToUInt32(buffer, 0);
+        }
+
+        internal uint Allocate<T>() where T : struct
+        {
+            return AllocateMemory(Marshal.SizeOf(typeof(T)));
+        }
+
+        internal T Read<T>(uint address) where T : struct
+        {
+            T structure = new T();
+
+            int structSize = Marshal.SizeOf(structure);
+            byte[] structBuffer = ReadMemory(address, structSize);
+            IntPtr structPointer = Marshal.AllocHGlobal(structSize);
+
+            Marshal.Copy(structBuffer, 0, structPointer, structSize);
+
+            structure = (T)Marshal.PtrToStructure(structPointer, structure.GetType());
+            Marshal.FreeHGlobal(structPointer);
+
+            return structure;
+        }
+
+        internal void Write<T>(uint address, T value) where T : struct
+        {
+            int structSize = Marshal.SizeOf(value);
+            byte[] structBuffer = new byte[structSize];
+
+            IntPtr structPointer = Marshal.AllocHGlobal(structSize);
+            Marshal.StructureToPtr(value, structPointer, true);
+            Marshal.Copy(structPointer, structBuffer, 0, structSize);
+            Marshal.FreeHGlobal(structPointer);
+
+            WriteMemory(address, structBuffer);
+        }
+
+        internal static uint ExtractChecksum(byte[] data)
+        {
+            var magic = BitConverter.ToUInt16(data, 0);
+            if (magic != 0x5A4D)
+            {
+                throw new IOException("Not a PE header!");
+            }
+            var nt = BitConverter.ToInt32(data, 60);
+            if ((nt + 248) > data.Length)
+            {
+                throw new IOException("NT header offset out of range!");
+            }
+            var signature = BitConverter.ToUInt32(data, nt);
+            if (signature != 0x00004550)
+            {
+                throw new IOException("Not a NT header!");
+            }
+            var checksum = BitConverter.ToUInt32(data, nt + 24 + 64);
+            return checksum;
+        }
+    }
+}

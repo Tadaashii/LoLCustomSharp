@@ -1,0 +1,294 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+
+namespace LoLCustomSharp
+{
+    [Serializable]
+    public class OverlayPatcher
+    {
+        // Please, please for the love of god do not attempt to use File/Build version of .exe
+        // Those are not reliable 
+        // Please!!
+        public uint Checksum { get; private set; }
+        public uint PMethArrayOffset { get; private set; }
+        public uint FileProviderListOffset { get; private set; }
+        public string Prefix { get; set; }
+
+        private byte[] _prefixBytes 
+        {
+            get
+            {
+                string str = Prefix;
+                if (string.IsNullOrEmpty(str))
+                {
+                    return new byte[256];
+                }
+                if (!str.EndsWith("/") && !str.EndsWith("\\"))
+                {
+                    str += "/";
+                }
+                var bytes = Encoding.ASCII.GetBytes(str);
+                var buffer = new byte[256];
+                Buffer.BlockCopy(bytes, 0, buffer, 0, bytes.Length);
+                return buffer;
+            }
+        }
+
+        public void Patch(Process process, out bool offsetsUpdated)
+        {
+            using (var league = new LeagueProcess(process))
+            {
+                if (NeedsUpdate(league))
+                {
+                    // TODO: throw an exception if this takes too long or league dies before
+                    while (process.MainWindowTitle != "League of Legends (TM) Client")
+                    {
+                        Thread.Sleep(10);
+                        process.Refresh();
+                    }
+                    UpdateOffsets(league);
+                    offsetsUpdated = true;
+                } 
+                else
+                {
+                    offsetsUpdated = false;
+                }
+                Patch(league);
+            }
+        }
+
+        public bool NeedsUpdate(LeagueProcess league)
+        {
+            var dataPE = league.ReadMemory(league.Base, 0x1000);
+            var actualChecksum = LeagueProcess.ExtractChecksum(dataPE);
+            return actualChecksum != Checksum || PMethArrayOffset == 0 || FileProviderListOffset == 0;
+        }
+
+        public void UpdateOffsets(LeagueProcess league)
+        {
+            var data = league.Dump();
+            var checksum = LeagueProcess.ExtractChecksum(data);
+            var pmethArrayOffsetIndex = PATERN_PMETH_ARRAY.Find(data);
+            var fileProviderListOffsetIndex = PATERN_FILE_PROVIDER_LIST.Find(data);
+            if (pmethArrayOffsetIndex > 0 && fileProviderListOffsetIndex > 0)
+            {
+                Checksum = checksum;
+                PMethArrayOffset = BitConverter.ToUInt32(data, pmethArrayOffsetIndex) - league.Base;
+                FileProviderListOffset = BitConverter.ToUInt32(data, fileProviderListOffsetIndex) - league.Base;
+            } 
+            else
+            {
+                throw new IOException("Failed to update offsets!");
+            }
+        }
+
+        public static bool IsLeague(Process league)
+        {
+            if (league.ProcessName == "League of Legends")
+            {
+                try
+                {
+                    return league.MainModule.ModuleName == "League of Legends.exe";
+                }
+                catch (Exception)
+                {
+                    return false;
+                }
+            }
+            return false;
+        }
+
+        public void Patch(LeagueProcess league)
+        {
+            var codePointer = league.AllocateMemory(0x900);
+            var codeVerifyPointer = codePointer + 0x000;
+            var codePrefixFnPointer = codePointer + 0x100;
+            var codeOpenPointer = codePointer + 0x200;
+            var codeCheckAccessPointer = codePointer + 0x300;
+            var codeCreateIteratorPointer = codePointer + 0x400;
+            var codeVectorDeleterPointer = codePointer + 0x500;
+            var codeIsRadsPointer = codePointer + 0x600;
+            league.WriteMemory(codeVerifyPointer, new byte[]
+            {
+                0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3, 0x90, 0x90,
+                0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+            });
+            league.WriteMemory(codePrefixFnPointer, new byte[]
+            {
+                0x57, 0x56, 0x8b, 0x54, 0x24, 0x0c, 0x8b, 0x74,
+                0x24, 0x14, 0x89, 0xd7, 0xac, 0xaa, 0x84, 0xc0,
+                0x75, 0xfa, 0x8b, 0x74, 0x24, 0x10, 0x83, 0xef,
+                0x01, 0xac, 0xaa, 0x84, 0xc0, 0x75, 0xfa, 0x5e,
+                0x89, 0xd0, 0x5f, 0xc3, 0x90, 0x90, 0x90, 0x90,
+                0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+            });
+            league.WriteMemory(codeOpenPointer, new byte[]
+            {
+                0x56, 0x53, 0x81, 0xec, 0x14, 0x02, 0x00, 0x00,
+                0x8b, 0x41, 0x04, 0x8b, 0x58, 0x08, 0x8b, 0x03,
+                0x8b, 0x30, 0x8d, 0x41, 0x0c, 0x89, 0x44, 0x24,
+                0x08, 0x8b, 0x84, 0x24, 0x20, 0x02, 0x00, 0x00,
+                0x89, 0x44, 0x24, 0x04, 0x8d, 0x44, 0x24, 0x10,
+                0x89, 0x04, 0x24, 0xff, 0x51, 0x08, 0x8b, 0x94,
+                0x24, 0x24, 0x02, 0x00, 0x00, 0x89, 0xd9, 0x89,
+                0x04, 0x24, 0x89, 0x54, 0x24, 0x04, 0xff, 0xd6,
+                0x83, 0xec, 0x08, 0x81, 0xc4, 0x14, 0x02, 0x00,
+                0x00, 0x5b, 0x5e, 0xc2, 0x08, 0x00, 0x90, 0x90,
+            });
+            league.WriteMemory(codeCheckAccessPointer, new byte[]
+            {
+                0x56, 0x53, 0x81, 0xec, 0x14, 0x02, 0x00, 0x00,
+                0x8b, 0x41, 0x04, 0x8b, 0x58, 0x08, 0x8b, 0x03,
+                0x8b, 0x70, 0x04, 0x8d, 0x41, 0x0c, 0x89, 0x44,
+                0x24, 0x08, 0x8b, 0x84, 0x24, 0x20, 0x02, 0x00,
+                0x00, 0x89, 0x44, 0x24, 0x04, 0x8d, 0x44, 0x24,
+                0x10, 0x89, 0x04, 0x24, 0xff, 0x51, 0x08, 0x8b,
+                0x94, 0x24, 0x24, 0x02, 0x00, 0x00, 0x89, 0xd9,
+                0x89, 0x04, 0x24, 0x89, 0x54, 0x24, 0x04, 0xff,
+                0xd6, 0x83, 0xec, 0x08, 0x81, 0xc4, 0x14, 0x02,
+                0x00, 0x00, 0x5b, 0x5e, 0xc2, 0x08, 0x00, 0x90,
+            });
+            league.WriteMemory(codeCreateIteratorPointer, new byte[]
+            {
+                0x31, 0xc0, 0xc2, 0x08, 0x00, 0x90, 0x90, 0x90,
+                0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+            });
+            league.WriteMemory(codeVectorDeleterPointer, new byte[]
+            {
+                0x89, 0xc8, 0xc2, 0x04, 0x00, 0x90, 0x90, 0x90,
+                0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+            });
+            league.WriteMemory(codeIsRadsPointer, new byte[]
+            {
+                0x31, 0xc0, 0xc3, 0x90, 0x90, 0x90, 0x90, 0x90,
+                0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
+            });
+            // Mark shellcode executable
+            // League AC will trip over if we allocate ReadWriteExecutable in one go
+            // So page can only be either ReadWrite or Executable
+            league.MarkMemoryExecutable(codePointer, 0x900);
+
+
+            var modifiedPMethPointer = league.Allocate<EVP_PKEY_METHOD>();
+            var orgignalPMethArrayPointer = PMethArrayOffset + league.Base;
+            // Read first pointer when it gets initialized(tnx pacman)
+            var originalPMethFirstPointer = league.WaitPointerNonZero(orgignalPMethArrayPointer);
+            // Read first PKEY_METHOD
+            var originalPMeth = league.Read<EVP_PKEY_METHOD>(originalPMethFirstPointer);
+            // Change verify function pointer
+            originalPMeth.verify = codeVerifyPointer;
+            // Write our new PKEY_METHOD
+            league.Write(modifiedPMethPointer, originalPMeth);
+            // Write the pointer to out PKEY_METHOD into pointer array
+            league.Write(orgignalPMethArrayPointer, modifiedPMethPointer);
+
+
+            var orginalFileProviderListPointer = FileProviderListOffset + league.Base;
+            // Those get deallocated upon exit so we need separate pages
+            var modifiedFileProviderPointer = league.Allocate<FileProvider>();
+            var modifiedFileProviderVtablePointer = league.Allocate<FileProviderVtable>();
+            league.Write(modifiedFileProviderPointer, new FileProvider
+            {
+                vtable = modifiedFileProviderVtablePointer,
+                list = orginalFileProviderListPointer,
+                prefixFn = codePrefixFnPointer,
+                prefix = _prefixBytes,
+            });
+            league.Write(modifiedFileProviderVtablePointer, new FileProviderVtable
+            {
+                Open = codeOpenPointer,
+                CheckAccess = codeCheckAccessPointer,
+                CreateIterator = codeCreateIteratorPointer,
+                VectorDeleter = codeVectorDeleterPointer,
+                IsRads = codeIsRadsPointer,
+            });
+
+
+            // Wait until providers have been registerd(first pointer turns non-0)
+            league.WaitPointerNonZero(orginalFileProviderListPointer);
+            var originalFileProviderList = league.Read<FileProviderList>(orginalFileProviderListPointer);
+            league.Write(orginalFileProviderListPointer, new FileProviderList
+            {
+                fileProviderPointer0 = modifiedFileProviderPointer,
+                fileProviderPointer1 = originalFileProviderList.fileProviderPointer0,
+                fileProviderPointer2 = originalFileProviderList.fileProviderPointer1,
+                fileProviderPointer3 = originalFileProviderList.fileProviderPointer2,
+                size = originalFileProviderList.size + 1,
+            });
+        }
+
+        private static readonly SigScanner PATERN_PMETH_ARRAY = new SigScanner("68 ?? ?? ?? ?? 6A 04 6A 12 8D 44 24 ?? 68 ?? ?? ?? ?? 50 E8 ?? ?? ?? ?? 83 C4 14 85 C0", 14);
+
+        private static readonly SigScanner PATERN_FILE_PROVIDER_LIST = new SigScanner("56 8B 74 24 08 B8 ?? ?? ?? ?? 33 C9 0F 1F 40 00", 6);
+
+        struct EVP_PKEY_METHOD
+        {
+            int pkey_id;
+            int flags;
+            int init;
+            int copy;
+            int cleanup;
+            int paramgen_init;
+            int paramgen;
+            int keygen_init;
+            int keygen;
+            int sign_init;
+            int sign;
+            int verify_init;
+            public uint verify;
+            int verify_recover_init;
+            int verify_recover;
+            int signctx_init;
+            int signctx;
+            int verifyctx_init;
+            int verifyctx;
+            int encrypt_init;
+            int encrypt;
+            int decrypt_init;
+            int decrypt;
+            int derive_init;
+            int derive;
+            int ctrl;
+            int ctrl_str;
+            int digestsign;
+            int digestverify;
+            int check;
+            int public_check;
+            int param_check;
+            int digest_custom;
+        };
+
+        struct FileProvider
+        {
+            public uint vtable;
+            public uint list;
+            public uint prefixFn;
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 256)]
+            public byte[] prefix;
+        };
+
+        struct FileProviderVtable
+        {
+            public uint Open;
+            public uint CheckAccess;
+            public uint CreateIterator;
+            public uint VectorDeleter;
+            public uint IsRads;
+        };
+
+        struct FileProviderList
+        {
+            public uint fileProviderPointer0;
+            public uint fileProviderPointer1;
+            public uint fileProviderPointer2;
+            public uint fileProviderPointer3;
+            public uint size;
+        };
+    }
+}
