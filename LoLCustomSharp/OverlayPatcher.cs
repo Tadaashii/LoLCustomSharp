@@ -99,7 +99,12 @@ namespace LoLCustomSharp
                     Thread.Sleep(1000);
                 }
             });
+            this._thread.IsBackground = true; //Thread needs to be background so it closes when the parent process dies
             this._thread.Start();
+        }
+        public void Stop()
+        {
+            this._thread.Abort();
         }
 
         public void Patch(Process process, out bool offsetsUpdated)
