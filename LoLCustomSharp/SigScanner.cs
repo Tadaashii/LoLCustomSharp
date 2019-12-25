@@ -14,8 +14,8 @@ namespace LoLCustomSharp
 
         public SigScanner(string pattern, int offset = 0)
         {
-            var chars = pattern.Split(' ');
-            _pattern = chars.Select((x) =>
+            string[] chars = pattern.Split(' ');
+            this._pattern = chars.Select((x) =>
             {
                 if (x == "??" || x == "?")
                 {
@@ -23,36 +23,36 @@ namespace LoLCustomSharp
                 }
                 return byte.Parse(x, NumberStyles.HexNumber);
             }).ToArray();
-            _wildcard = chars.Select((x) =>
+            this._wildcard = chars.Select((x) =>
             {
                 return x == "??" || x == "?";
             }).ToArray();
-            _offset = offset;
+            this._offset = offset;
         }
 
         public int Find(byte[] data)
         {
-            var skipTable = new int[256];
-            var lastIndex = _pattern.Length - 1;
+            int[] skipTable = new int[256];
+            int lastIndex = this._pattern.Length - 1;
 
-            var safeSkip = Math.Max(lastIndex - Array.LastIndexOf(_wildcard, true), 1);
-            for (var i = 0; i < skipTable.Length; i++)
+            int safeSkip = Math.Max(lastIndex - Array.LastIndexOf(this._wildcard, true), 1);
+            for (int i = 0; i < skipTable.Length; i++)
             {
                 skipTable[i] = safeSkip;
             }
 
-            for (var i = lastIndex - safeSkip; i < lastIndex; i++)
+            for (int i = lastIndex - safeSkip; i < lastIndex; i++)
             {
-                skipTable[_pattern[i]] = lastIndex - i;
+                skipTable[this._pattern[i]] = lastIndex - i;
             }
 
-            for (var i = 0; i <= data.Length - _pattern.Length; )
+            for (int i = 0; i <= data.Length - this._pattern.Length; )
             {
-                for (var j = lastIndex; _wildcard[j] || data[i + j] == _pattern[j]; --j)
+                for (int j = lastIndex; this._wildcard[j] || data[i + j] == this._pattern[j]; --j)
                 {
                     if (j == 0)
                     {
-                        return i + _offset;
+                        return i + this._offset;
                     }
                 }
                 i += Math.Max(skipTable[data[i + lastIndex] & 0xFF], 1);

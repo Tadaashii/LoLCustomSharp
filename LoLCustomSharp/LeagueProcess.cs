@@ -28,7 +28,6 @@ namespace LoLCustomSharp
         [DllImport("kernel32.dll")]
         private static extern bool CloseHandle(int hProcess);
 
-
         [DllImport("kernel32.dll")]
         private static extern bool ReadProcessMemory(int hProcess, uint lpBaseAddress, byte[] lpBuffer, int dwSize, out uint lpNumberOfBytesRead);
 
@@ -48,23 +47,16 @@ namespace LoLCustomSharp
         private uint _moduleBase;
         private int _moduleSize;
 
+        internal uint Base => this._moduleBase;
+
         public LeagueProcess(Process process)
         {
-            hProcess = 0;
-            _moduleBase = (uint)process.MainModule.BaseAddress;
-            _moduleSize = process.MainModule.ModuleMemorySize;
+            this.hProcess = 0;
+            this._moduleBase = (uint)process.MainModule.BaseAddress;
+            this._moduleSize = process.MainModule.ModuleMemorySize;
 
-            var pid = (uint)process.Id;
-            hProcess = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION | SYNCHRONIZE, false, pid);
-        }
-
-        protected virtual void Dispose(bool disposing)
-        {
-            if (hProcess != 0 && hProcess != -1)
-            {
-                CloseHandle(hProcess);
-                hProcess = 0;
-            }
+            uint pid = (uint)process.Id;
+            this.hProcess = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION | SYNCHRONIZE, false, pid);
         }
 
         ~LeagueProcess()
@@ -72,21 +64,27 @@ namespace LoLCustomSharp
             Dispose(false);
         }
 
+        protected virtual void Dispose(bool disposing)
+        {
+            if (this.hProcess != 0 && this.hProcess != -1)
+            {
+                CloseHandle(this.hProcess);
+                this.hProcess = 0;
+            }
+        }
         public void Dispose()
         {
             Dispose(true);
         }
 
-        internal uint Base => _moduleBase;
-
         internal byte[] Dump()
         {
-            var data = new byte[80 * 1024 * 1024];
-            var buffer = new byte[0x1000];
-            var baseAddress = Base;
-            for(var i = 0; i < data.Length; i += buffer.Length)
+            byte[] data = new byte[80 * 1024 * 1024];
+            byte[] buffer = new byte[0x1000];
+            uint baseAddress = this.Base;
+            for (int i = 0; i < data.Length; i += buffer.Length)
             {
-                ReadProcessMemory(hProcess, baseAddress + (uint)i, buffer, buffer.Length, out uint _);
+                ReadProcessMemory(this.hProcess, baseAddress + (uint)i, buffer, buffer.Length, out uint _);
                 Buffer.BlockCopy(buffer, 0, data, i, buffer.Length);
             }
             return data;
@@ -94,33 +92,30 @@ namespace LoLCustomSharp
 
         internal byte[] ReadMemory(uint address, int size)
         {
-            var buffer = new byte[size];
-            if (!ReadProcessMemory(hProcess, address, buffer, size, out uint _))
+            byte[] buffer = new byte[size];
+            if (!ReadProcessMemory(this.hProcess, address, buffer, size, out uint _))
             {
                 throw new IOException("Failed to read memory!");
             }
             return buffer;
         }
-
         internal void WriteMemory(uint address, byte[] buffer)
         {
-            if (!WriteProcessMemory(hProcess, address, buffer, buffer.Length, out uint _))
+            if (!WriteProcessMemory(this.hProcess, address, buffer, buffer.Length, out uint _))
             {
                 throw new IOException("Failed to write memory");
             }
         }
-
         internal void MarkMemoryExecutable(uint address, int size)
         {
-            if (!VirtualProtectEx(hProcess, address, size, PAGE_EXECUTE, out int _))
+            if (!VirtualProtectEx(this.hProcess, address, size, PAGE_EXECUTE, out int _))
             {
                 throw new IOException("Failed to mark region as executable");
             }
         }
-
         internal uint AllocateMemory(int size)
         {
-            var ptr = VirtualAllocEx(hProcess, 0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+            uint ptr = VirtualAllocEx(this.hProcess, 0, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
             if (ptr == 0)
             {
                 throw new IOException("Failed to allocate memory");
@@ -130,16 +125,15 @@ namespace LoLCustomSharp
 
         public void WaitForExit()
         {
-            WaitForSingleObject(hProcess, INFINITE);
+            WaitForSingleObject(this.hProcess, INFINITE);
         }
-
         internal uint WaitPointerNonZero(uint address)
         {
-            var buffer = new byte[4];
+            byte[] buffer = new byte[4];
             do
             {
                 Thread.Sleep(1);
-                if(!ReadProcessMemory(hProcess, address, buffer, 4, out uint _))
+                if (!ReadProcessMemory(this.hProcess, address, buffer, 4, out uint _))
                 {
                     throw new IOException("Failed to read pointer");
                 }
@@ -151,7 +145,6 @@ namespace LoLCustomSharp
         {
             return AllocateMemory(Marshal.SizeOf(typeof(T)));
         }
-
         internal T Read<T>(uint address) where T : struct
         {
             T structure = new T();
@@ -167,7 +160,6 @@ namespace LoLCustomSharp
 
             return structure;
         }
-
         internal void Write<T>(uint address, T value) where T : struct
         {
             int structSize = Marshal.SizeOf(value);
@@ -183,22 +175,22 @@ namespace LoLCustomSharp
 
         internal static uint ExtractChecksum(byte[] data)
         {
-            var magic = BitConverter.ToUInt16(data, 0);
+            ushort magic = BitConverter.ToUInt16(data, 0);
             if (magic != 0x5A4D)
             {
                 throw new IOException("Not a PE header!");
             }
-            var nt = BitConverter.ToInt32(data, 60);
+            int nt = BitConverter.ToInt32(data, 60);
             if ((nt + 248) > data.Length)
             {
                 throw new IOException("NT header offset out of range!");
             }
-            var signature = BitConverter.ToUInt32(data, nt);
+            uint signature = BitConverter.ToUInt32(data, nt);
             if (signature != 0x00004550)
             {
                 throw new IOException("Not a NT header!");
             }
-            var checksum = BitConverter.ToUInt32(data, nt + 24 + 64);
+            uint checksum = BitConverter.ToUInt32(data, nt + 24 + 64);
             return checksum;
         }
     }

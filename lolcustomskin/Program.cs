@@ -17,31 +17,10 @@ namespace lolcustomskin
     {
         static void Main(string[] args)
         {
-            var exePath = Assembly.GetEntryAssembly().Location;
-            var configPath = Path.GetDirectoryName(exePath) + "/lolcustomskin-sharp.bin";
-            OverlayPatcher patcher;
-            if (File.Exists("lolcustomskin-sharp.bin"))
-            {
-                try
-                {
-                    using(var file = new FileStream(configPath, FileMode.Open))
-                    {
-                        var formatter = new BinaryFormatter();
-                        patcher = (OverlayPatcher)formatter.Deserialize(file);
-                    }
-                }
-                catch (Exception error)
-                {
-                    Console.WriteLine(error.StackTrace);
-                    Console.WriteLine("Press enter to exit...");
-                    Console.ReadLine();
-                    return;
-                }
-            }
-            else
-            {
-                patcher = new OverlayPatcher();
-            }
+            string exePath = Assembly.GetEntryAssembly().Location;
+            string configPath = Path.GetDirectoryName(exePath) + "/lolcustomskin-sharp.bin";
+            OverlayPatcher patcher = OverlayPatcher.Load();
+
             patcher.Prefix = args.Length > 0 ? args[0] : "MOD/";
             Console.WriteLine($"Overlay: {patcher.Prefix}");
             Console.WriteLine($"Offsets: 0x{patcher.Checksum:X08} 0x{patcher.FileProviderListOffset:X08} 0x{patcher.PMethArrayOffset:X08}");
@@ -49,7 +28,7 @@ namespace lolcustomskin
             Console.WriteLine("Waiting for league to start...");
             for(;;)
             {
-                foreach(var process in Process.GetProcessesByName("League of Legends"))
+                foreach(Process process in Process.GetProcessesByName("League of Legends"))
                 {
                     if(!OverlayPatcher.IsLeague(process))
                     {
@@ -60,7 +39,7 @@ namespace lolcustomskin
 
                     try
                     {
-                        using (var league = new LeagueProcess(process))
+                        using (LeagueProcess league = new LeagueProcess(process))
                         {
                             if (patcher.NeedsUpdate(league))
                             {
@@ -96,9 +75,9 @@ namespace lolcustomskin
                         Console.WriteLine($"Offsets: 0x{patcher.Checksum:X08} 0x{patcher.FileProviderListOffset:X08} 0x{patcher.PMethArrayOffset:X08}");
                         try
                         {
-                            using (var file = new FileStream(configPath, FileMode.OpenOrCreate))
+                            using (FileStream file = new FileStream(configPath, FileMode.OpenOrCreate))
                             {
-                                var formatter = new BinaryFormatter();
+                                BinaryFormatter formatter = new BinaryFormatter();
                                 formatter.Serialize(file, patcher);
                             }
                         }
