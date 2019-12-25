@@ -10,10 +10,10 @@ using System.Threading;
 
 namespace LoLCustomSharp
 {
-    [Serializable]
     public class OverlayPatcher
     {
         public const string CONFIG_FILE = "lolcustomskin-sharp.bin";
+        public const uint VERSION = 1;
 
         // Please, please for the love of god do not attempt to use File/Build version of .exe
         // Those are not reliable 
@@ -46,6 +46,14 @@ namespace LoLCustomSharp
 
         private static readonly SigScanner PATERN_PMETH_ARRAY = new SigScanner("68 ?? ?? ?? ?? 6A 04 6A 12 8D 44 24 ?? 68 ?? ?? ?? ?? 50 E8 ?? ?? ?? ?? 83 C4 14 85 C0", 14);
         private static readonly SigScanner PATERN_FILE_PROVIDER_LIST = new SigScanner("56 8B 74 24 08 B8 ?? ?? ?? ?? 33 C9 0F 1F 40 00", 6);
+
+        public OverlayPatcher(string configLocation = CONFIG_FILE)
+        {
+            if (File.Exists(configLocation))
+            {
+                ReadConfig();
+            }
+        }
 
         public void Start(string overlayFolder)
         {
@@ -82,11 +90,7 @@ namespace LoLCustomSharp
 
                         if (offsetsUpdated)
                         {
-                            using (FileStream file = new FileStream(CONFIG_FILE, FileMode.OpenOrCreate))
-                            {
-                                BinaryFormatter formatter = new BinaryFormatter();
-                                formatter.Serialize(file, this);
-                            }
+                            WriteConfig();
                         }
 
                         process.WaitForExit();
@@ -286,19 +290,30 @@ namespace LoLCustomSharp
             return false;
         }
 
-        public static OverlayPatcher Load(string configLocation = CONFIG_FILE)
+        private void ReadConfig(string configLocation = CONFIG_FILE)
         {
-            if (File.Exists(configLocation))
+            using (BinaryReader br = new BinaryReader(File.OpenRead(configLocation)))
             {
-                using (FileStream file = new FileStream(configLocation, FileMode.Open))
+                uint version = br.ReadUInt32();
+                if (version != VERSION)
                 {
-                    BinaryFormatter formatter = new BinaryFormatter();
-                    return (OverlayPatcher)formatter.Deserialize(file);
+                    //Don't need to read rest of config, let the patcher update itself
+                    return;
                 }
+
+                this.Checksum = br.ReadUInt32();
+                this.PMethArrayOffset = br.ReadUInt32();
+                this.FileProviderListOffset = br.ReadUInt32();
             }
-            else
+        }
+        private void WriteConfig(string configLocation = CONFIG_FILE)
+        {
+            using (BinaryWriter bw = new BinaryWriter(File.Create(configLocation)))
             {
-                return new OverlayPatcher();
+                bw.Write(VERSION);
+                bw.Write(this.Checksum);
+                bw.Write(this.PMethArrayOffset);
+                bw.Write(this.FileProviderListOffset);
             }
         }
 
