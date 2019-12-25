@@ -49,6 +49,8 @@ namespace LoLCustomSharp
 
         public void Start(string overlayFolder)
         {
+            this.Prefix = overlayFolder;
+
             this._thread = new Thread(delegate ()
             {
                 while (true)
