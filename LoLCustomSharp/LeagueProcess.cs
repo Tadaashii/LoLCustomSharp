@@ -133,10 +133,7 @@ namespace LoLCustomSharp
             do
             {
                 Thread.Sleep(1);
-                if (!ReadProcessMemory(this.hProcess, address, buffer, 4, out uint _))
-                {
-                    throw new IOException("Failed to read pointer");
-                }
+                ReadProcessMemory(this.hProcess, address, buffer, 4, out uint _); //This can fail sometimes
             } while (buffer[0] == 0 && buffer[1] == 0 && buffer[2] == 0 && buffer[3] == 0);
             return BitConverter.ToUInt32(buffer, 0);
         }
