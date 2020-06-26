@@ -47,6 +47,12 @@ namespace LoLCustomSharp
         private static readonly SigScanner PATERN_PMETH_ARRAY = new SigScanner("68 ?? ?? ?? ?? 6A 04 6A 12 8D 44 24 ?? 68 ?? ?? ?? ?? 50 E8 ?? ?? ?? ?? 83 C4 14 85 C0", 14);
         private static readonly SigScanner PATERN_FILE_PROVIDER_LIST = new SigScanner("56 8B 74 24 08 B8 ?? ?? ?? ?? 33 C9 0F 1F 40 00", 6);
 
+        public delegate void PatcherMessageCallback(string message);
+        public delegate void PatcherErrorCallback(Exception exception);
+
+        private PatcherMessageCallback _messageCallback;
+        private PatcherErrorCallback _errorCallback;
+
         public OverlayPatcher(string configLocation = CONFIG_FILE)
         {
             if (File.Exists(configLocation))
@@ -55,50 +61,66 @@ namespace LoLCustomSharp
             }
         }
 
-        public void Start(string overlayFolder)
+        public void Start(string overlayFolder, PatcherMessageCallback messageCallback, PatcherErrorCallback errorCallback)
         {
             this.Prefix = overlayFolder;
+            this._messageCallback = messageCallback;
+            this._errorCallback = errorCallback;
 
             this._thread = new Thread(delegate ()
             {
-                while (true)
+                try
                 {
-                    foreach (Process process in Process.GetProcessesByName("League of Legends"))
+                    messageCallback?.Invoke("Starting patcher");
+
+                    while (true)
                     {
-                        if (!IsLeague(process))
+                        foreach (Process process in Process.GetProcessesByName("League of Legends"))
                         {
-                            break;
-                        }
-
-                        bool offsetsUpdated = false;
-                        using (LeagueProcess league = new LeagueProcess(process))
-                        {
-                            if (NeedsUpdate(league))
+                            if (!IsLeague(process))
                             {
-                                while (process.MainWindowTitle != "League of Legends (TM) Client")
-                                {
-                                    Thread.Sleep(10);
-                                    process.Refresh();
-                                }
-
-                                UpdateOffsets(league);
-                                offsetsUpdated = true;
+                                break;
                             }
 
-                            Patch(league);
-                        }
+                            messageCallback?.Invoke("Found League process");
 
-                        if (offsetsUpdated)
-                        {
-                            WriteConfig();
-                        }
+                            bool offsetsUpdated = false;
+                            using (LeagueProcess league = new LeagueProcess(process))
+                            {
+                                if (NeedsUpdate(league))
+                                {
+                                    messageCallback?.Invoke("Updating offsets");
+                                    while (!process.WaitForInputIdle())
+                                    {
+                                        Thread.Sleep(10);
+                                    }
 
-                        process.WaitForExit();
-                        break;
+                                    UpdateOffsets(league);
+                                    offsetsUpdated = true;
+                                    messageCallback?.Invoke("Offsets updated");
+                                }
+
+                                messageCallback?.Invoke("Patching League...");
+                                Patch(league);
+                            }
+
+                            if (offsetsUpdated)
+                            {
+                                WriteConfig();
+                            }
+
+                            process.WaitForExit();
+                            break;
+                        }
+                        Thread.Sleep(1000);
                     }
-                    Thread.Sleep(1000);
+                }
+                catch(Exception exception)
+                {
+                    errorCallback?.Invoke(exception);
                 }
             });
+
             this._thread.IsBackground = true; //Thread needs to be background so it closes when the parent process dies
             this._thread.Start();
         }
@@ -107,30 +129,6 @@ namespace LoLCustomSharp
             this._thread.Abort();
         }
 
-        public void Patch(Process process, out bool offsetsUpdated)
-        {
-            using (LeagueProcess league = new LeagueProcess(process))
-            {
-                if (NeedsUpdate(league))
-                {
-                    // TODO: throw an exception if this takes too long or league dies before
-                    while (process.MainWindowTitle != "League of Legends (TM) Client")
-                    {
-                        Thread.Sleep(10);
-                        process.Refresh();
-                    }
-
-                    UpdateOffsets(league);
-                    offsetsUpdated = true;
-                }
-                else
-                {
-                    offsetsUpdated = false;
-                }
-
-                Patch(league);
-            }
-        }
         public void Patch(LeagueProcess league)
         {
             uint codePointer = league.AllocateMemory(0x900);
@@ -272,6 +270,10 @@ namespace LoLCustomSharp
                 this.Checksum = checksum;
                 this.PMethArrayOffset = BitConverter.ToUInt32(data, pmethArrayOffsetIndex) - league.Base;
                 this.FileProviderListOffset = BitConverter.ToUInt32(data, fileProviderListOffsetIndex) - league.Base;
+
+                this._messageCallback?.Invoke(string.Format("Checksum: {0}", checksum));
+                this._messageCallback?.Invoke(string.Format("PMethArrayOffsetIndex: {0}", pmethArrayOffsetIndex));
+                this._messageCallback?.Invoke(string.Format("FileProviderListOffsetIndex: {0}", fileProviderListOffsetIndex));
             }
             else
             {
@@ -283,14 +285,7 @@ namespace LoLCustomSharp
         {
             if (league.ProcessName == "League of Legends")
             {
-                try
-                {
-                    return league.MainModule.ModuleName == "League of Legends.exe";
-                }
-                catch (Exception)
-                {
-                    return false;
-                }
+                return league.MainModule.ModuleName == "League of Legends.exe";
             }
             return false;
         }
@@ -321,66 +316,66 @@ namespace LoLCustomSharp
                 bw.Write(this.FileProviderListOffset);
             }
         }
-
-        struct EVP_PKEY_METHOD
-        {
-            int pkey_id;
-            int flags;
-            int init;
-            int copy;
-            int cleanup;
-            int paramgen_init;
-            int paramgen;
-            int keygen_init;
-            int keygen;
-            int sign_init;
-            int sign;
-            int verify_init;
-            public uint verify;
-            int verify_recover_init;
-            int verify_recover;
-            int signctx_init;
-            int signctx;
-            int verifyctx_init;
-            int verifyctx;
-            int encrypt_init;
-            int encrypt;
-            int decrypt_init;
-            int decrypt;
-            int derive_init;
-            int derive;
-            int ctrl;
-            int ctrl_str;
-            int digestsign;
-            int digestverify;
-            int check;
-            int public_check;
-            int param_check;
-            int digest_custom;
-        };
-        struct FileProvider
-        {
-            public uint vtable;
-            public uint list;
-            public uint prefixFn;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 256)]
-            public byte[] prefix;
-        };
-        struct FileProviderVtable
-        {
-            public uint Open;
-            public uint CheckAccess;
-            public uint CreateIterator;
-            public uint VectorDeleter;
-            public uint IsRads;
-        };
-        struct FileProviderList
-        {
-            public uint fileProviderPointer0;
-            public uint fileProviderPointer1;
-            public uint fileProviderPointer2;
-            public uint fileProviderPointer3;
-            public uint size;
-        };
     }
+
+    struct EVP_PKEY_METHOD
+    {
+        int pkey_id;
+        int flags;
+        int init;
+        int copy;
+        int cleanup;
+        int paramgen_init;
+        int paramgen;
+        int keygen_init;
+        int keygen;
+        int sign_init;
+        int sign;
+        int verify_init;
+        public uint verify;
+        int verify_recover_init;
+        int verify_recover;
+        int signctx_init;
+        int signctx;
+        int verifyctx_init;
+        int verifyctx;
+        int encrypt_init;
+        int encrypt;
+        int decrypt_init;
+        int decrypt;
+        int derive_init;
+        int derive;
+        int ctrl;
+        int ctrl_str;
+        int digestsign;
+        int digestverify;
+        int check;
+        int public_check;
+        int param_check;
+        int digest_custom;
+    };
+    struct FileProvider
+    {
+        public uint vtable;
+        public uint list;
+        public uint prefixFn;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 256)]
+        public byte[] prefix;
+    };
+    struct FileProviderVtable
+    {
+        public uint Open;
+        public uint CheckAccess;
+        public uint CreateIterator;
+        public uint VectorDeleter;
+        public uint IsRads;
+    };
+    struct FileProviderList
+    {
+        public uint fileProviderPointer0;
+        public uint fileProviderPointer1;
+        public uint fileProviderPointer2;
+        public uint fileProviderPointer3;
+        public uint size;
+    };
 }

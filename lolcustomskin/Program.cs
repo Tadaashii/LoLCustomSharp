@@ -25,7 +25,7 @@ namespace lolcustomskin
             Console.WriteLine($"Offsets: 0x{patcher.Checksum:X08} 0x{patcher.FileProviderListOffset:X08} 0x{patcher.PMethArrayOffset:X08}");
             Console.WriteLine("Waiting for league to start...");
 
-            patcher.Start(args.Length > 0 ? args[0] : "MOD/");
+            patcher.Start(args.Length > 0 ? args[0] : "MOD/", null, null);
         }
     }
 }
