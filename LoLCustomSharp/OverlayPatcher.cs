@@ -46,7 +46,6 @@ namespace LoLCustomSharp
 
         private static readonly SigScanner PATERN_PMETH_ARRAY = new SigScanner("68 ?? ?? ?? ?? 6A 04 6A 12 8D 44 24 ?? 68 ?? ?? ?? ?? 50 E8 ?? ?? ?? ?? 83 C4 14 85 C0", 14);
         private static readonly SigScanner PATERN_FILE_PROVIDER_LIST = new SigScanner("56 8B 74 24 08 B8 ?? ?? ?? ?? 33 C9 0F 1F 40 00", 6);
-        private const int PROCESS_IDLE_TIMEOUT = 5000;
 
         public delegate void PatcherMessageCallback(string message);
         public delegate void PatcherErrorCallback(Exception exception);
@@ -90,7 +89,7 @@ namespace LoLCustomSharp
                             {
                                 bool needsUpdate = NeedsUpdate(league);
 
-                                if (process.WaitForInputIdle(PROCESS_IDLE_TIMEOUT))
+                                if (process.WaitForInputIdle())
                                 {
                                     if(needsUpdate)
                                     {
@@ -106,7 +105,7 @@ namespace LoLCustomSharp
                                 }
                                 else
                                 {
-                                    messageCallback?.Invoke("Patcher timed out while waiting for idle input");
+                                    messageCallback?.Invoke("Failed to wait for idle input from process");
                                 }
                             }
 
@@ -118,6 +117,7 @@ namespace LoLCustomSharp
                             process.WaitForExit();
                             break;
                         }
+
                         Thread.Sleep(1000);
                     }
                 }
