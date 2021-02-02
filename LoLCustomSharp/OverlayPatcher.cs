@@ -1,11 +1,7 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Runtime.Serialization.Formatters.Binary;
-using System.Text;
 using System.Threading;
 
 namespace LoLCustomSharp
@@ -28,106 +24,98 @@ namespace LoLCustomSharp
 
         public string Prefix { get; set; }
 
+        public string _exeLocation { get; set; }
+
         // TODO: actually normalize the path ?
-        public string PrefixNormalized => Prefix.EndsWith("/") || Prefix.EndsWith("\\") ? Prefix : Prefix + "/";
+        public string PrefixNormalized => Prefix.EndsWith( "/" ) || Prefix.EndsWith( "\\" ) ? Prefix : Prefix + "/";
 
         private string _configPath;
 
         private Thread _thread;
 
-        private static readonly SigScanner PAT_CreateFileA_CALL = SigScanner.Pattern("6A 03 68 00 00 00 C0 68 ?? ?? ?? ?? FF 15", 14);
+        private static readonly SigScanner PAT_CreateFileA_CALL = SigScanner.Pattern( "6A 03 68 00 00 00 C0 68 ?? ?? ?? ?? FF 15" , 14 );
 
-        private static readonly SigScanner PAT_ReturnAddress = SigScanner.Pattern("56 8B CF E8 ?? ?? ?? ?? 84 C0 75 12", 8);
+        private static readonly SigScanner PAT_ReturnAddress = SigScanner.Pattern( "56 8B CF E8 ?? ?? ?? ?? 84 C0 75 12" , 8 );
 
-        private static readonly SigScanner PAT_FreePointerOffset = SigScanner.Pattern("A1 ?? ?? ?? ?? 85 C0 74 09 3D ?? ?? ?? ?? 74 02 FF E0 FF 74 24 04 E8", 1);
+        private static readonly SigScanner PAT_FreePointerOffset = SigScanner.Pattern( "A1 ?? ?? ?? ?? 85 C0 74 09 3D ?? ?? ?? ?? 74 02 FF E0 FF 74 24 04 E8" , 1 );
 
         private static readonly int OFF_FreeFunctionOffset = 17;
 
-        public delegate void PatcherMessageCallback(string message);
-        public delegate void PatcherErrorCallback(Exception exception);
+        public delegate void PatcherMessageCallback( string message );
+        public delegate void PatcherErrorCallback( Exception exception );
 
         private PatcherMessageCallback _messageCallback;
         private PatcherErrorCallback _errorCallback;
 
-        public OverlayPatcher(string configLocation = CONFIG_FILE)
+        public OverlayPatcher( string configLocation = CONFIG_FILE )
         {
             _configPath = configLocation;
-            if (File.Exists(configLocation))
+            if ( File.Exists( configLocation ) )
             {
                 ReadConfig();
             }
         }
 
-        public void Start(string overlayFolder, PatcherMessageCallback messageCallback, PatcherErrorCallback errorCallback)
+        public void Start( string overlayFolder , PatcherMessageCallback messageCallback , PatcherErrorCallback errorCallback )
         {
             this.Prefix = overlayFolder;
             this._messageCallback = messageCallback;
             this._errorCallback = errorCallback;
 
-            this._thread = new Thread(delegate ()
+            this._thread = new Thread( () =>
             {
-                try
-                {
-                    messageCallback?.Invoke("Starting patcher");
-                    this.PrintConfig();
+                 try
+                 {
+                     messageCallback?.Invoke( "Starting patcher" );
+                     this.PrintConfig();
+                     messageCallback?.Invoke( "Looking for league process..." );
 
-                    while (true)
-                    {
-                        foreach (Process process in Process.GetProcessesByName("League of Legends"))
-                        {
-                            if (!IsLeague(process))
-                            {
-                                break;
-                            }
+                     while ( true )
+                     {
+                         Process process = GetLeagueProcess();
+                         if ( process == null ) continue;
 
-                            messageCallback?.Invoke("Found League process");
+                         messageCallback?.Invoke( "Found League process" );
 
-                            bool offsetsUpdated = false;
-                            using (LeagueProcess league = new LeagueProcess(process))
-                            {
-                                bool needsUpdate = NeedsUpdate(league);
+                         bool offsetsUpdated = false;
+                         using ( LeagueProcess league = new LeagueProcess( process ) )
+                         {
+                             bool needsUpdate = NeedsUpdate( league );
 
-                                if (process.WaitForInputIdle())
-                                {
-                                    if(needsUpdate)
-                                    {
-                                        messageCallback?.Invoke("Updating offsets");
+                             if ( process.WaitForInputIdle() )
+                             {
+                                 if ( needsUpdate )
+                                 {
+                                     messageCallback?.Invoke( "Updating offsets" );
 
-                                        UpdateOffsets(league);
-                                        offsetsUpdated = true;
-                                        messageCallback?.Invoke("Offsets updated");
-                                    }
+                                     UpdateOffsets( league );
+                                     offsetsUpdated = true;
+                                     messageCallback?.Invoke( "Offsets updated" );
+                                 }
 
-                                    messageCallback?.Invoke("Patching League...");
-                                    Patch(league);
-                                }
-                                else
-                                {
-                                    messageCallback?.Invoke("Failed to wait for idle input from process");
-                                }
-                            }
+                                 messageCallback?.Invoke( "Patching League..." );
+                                 Patch( league );
+                             } else
+                                 messageCallback?.Invoke( "Failed to wait for idle input from process" );
+                         }
 
-                            if (offsetsUpdated)
-                            {
-                                WriteConfig(_configPath);
-                            }
+                         if ( offsetsUpdated )
+                             WriteConfig( _configPath );
 
-                            process.WaitForExit();
-                            break;
-                        }
-
-                        Thread.Sleep(1000);
-                    }
-                }
-                catch(Exception exception)
-                {
-                    errorCallback?.Invoke(exception);
-                }
-            });
+                         process.WaitForExit();
+                         Thread.Sleep( 1000 );
+                         messageCallback?.Invoke( "Looking for league process..." );
+                     }
+                 } catch ( Exception exception )
+                 {
+                     errorCallback?.Invoke( exception );
+                 }
+            } );
 
             this._thread.IsBackground = true; //Thread needs to be background so it closes when the parent process dies
             this._thread.Start();
         }
+
         public void Stop()
         {
             this._thread.Abort();
@@ -138,38 +126,41 @@ namespace LoLCustomSharp
             this._thread.Join();
         }
 
-        public static bool IsLeague(Process league)
+        private Process GetLeagueProcess()
         {
-            if (league.ProcessName == "League of Legends")
+            foreach ( Process process in Process.GetProcessesByName( "League of Legends" ) )
             {
-                return league.MainModule.ModuleName == "League of Legends.exe";
+                var mainModule = process.MainModule;
+                if ( mainModule.ModuleName.Equals( "League of Legends.exe" )
+                    && _exeLocation.Equals( Path.GetDirectoryName( mainModule.FileName ) ) )
+                    return process;
             }
-            return false;
+            return null;
         }
 
-        public bool NeedsUpdate(LeagueProcess league)
+        public bool NeedsUpdate( LeagueProcess league )
         {
-            byte[] dataPE = league.ReadMemory(league.Base, 0x1000);
-            uint actualChecksum = LeagueProcess.ExtractChecksum(dataPE);
+            byte[] dataPE = league.ReadMemory( league.Base , 0x1000 );
+            uint actualChecksum = LeagueProcess.ExtractChecksum( dataPE );
             return actualChecksum != this.Checksum || this.CreateFileARefOffset == 0 || this.CreateFileAOffset == 0 || this.ReturnAddressOffset == 0 || this.FreePointerOffset == 0 || this.FreeFunctionOffset == 0;
         }
 
         private void PrintConfig()
         {
-            this._messageCallback?.Invoke($"Checksum: 0x{Checksum:X08}");
-            this._messageCallback?.Invoke($"CreateFileARefOffset: 0x{CreateFileARefOffset:X08}");
-            this._messageCallback?.Invoke($"CreateFileAOffset: 0x{CreateFileAOffset:X08}");
-            this._messageCallback?.Invoke($"ReturnAddressOffset: 0x{ReturnAddressOffset:X08}");
-            this._messageCallback?.Invoke($"FreePointerOffset: 0x{FreePointerOffset:X08}");
-            this._messageCallback?.Invoke($"FreeFunctionOffset: 0x{FreeFunctionOffset:X08}");
+            this._messageCallback?.Invoke( $"Checksum: 0x{Checksum:X08}" );
+            this._messageCallback?.Invoke( $"CreateFileARefOffset: 0x{CreateFileARefOffset:X08}" );
+            this._messageCallback?.Invoke( $"CreateFileAOffset: 0x{CreateFileAOffset:X08}" );
+            this._messageCallback?.Invoke( $"ReturnAddressOffset: 0x{ReturnAddressOffset:X08}" );
+            this._messageCallback?.Invoke( $"FreePointerOffset: 0x{FreePointerOffset:X08}" );
+            this._messageCallback?.Invoke( $"FreeFunctionOffset: 0x{FreeFunctionOffset:X08}" );
         }
 
-        private void ReadConfig(string configLocation = CONFIG_FILE)
+        private void ReadConfig( string configLocation = CONFIG_FILE )
         {
-            using (BinaryReader br = new BinaryReader(File.OpenRead(configLocation)))
+            using ( BinaryReader br = new BinaryReader( File.OpenRead( configLocation ) ) )
             {
                 uint version = br.ReadUInt32();
-                if (version != VERSION)
+                if ( version != VERSION )
                 {
                     //Don't need to read rest of config, let the patcher update itself
                     return;
@@ -184,71 +175,71 @@ namespace LoLCustomSharp
             }
         }
 
-        private void WriteConfig(string configLocation = CONFIG_FILE)
+        private void WriteConfig( string configLocation = CONFIG_FILE )
         {
-            using (BinaryWriter bw = new BinaryWriter(File.Create(configLocation)))
+            using ( BinaryWriter bw = new BinaryWriter( File.Create( configLocation ) ) )
             {
-                bw.Write(VERSION);
-                bw.Write(this.Checksum);
-                bw.Write(this.CreateFileARefOffset);
-                bw.Write(this.CreateFileAOffset);
-                bw.Write(this.ReturnAddressOffset);
-                bw.Write(this.FreePointerOffset);
-                bw.Write(this.FreeFunctionOffset);
+                bw.Write( VERSION );
+                bw.Write( this.Checksum );
+                bw.Write( this.CreateFileARefOffset );
+                bw.Write( this.CreateFileAOffset );
+                bw.Write( this.ReturnAddressOffset );
+                bw.Write( this.FreePointerOffset );
+                bw.Write( this.FreeFunctionOffset );
             }
         }
 
-        public void UpdateOffsets(LeagueProcess league)
+        public void UpdateOffsets( LeagueProcess league )
         {
             byte[] data = league.Dump();
-            uint checksum = LeagueProcess.ExtractChecksum(data);
+            uint checksum = LeagueProcess.ExtractChecksum( data );
 
-            int createFileARefOffset = PAT_CreateFileA_CALL.Find(data);
-            if (createFileARefOffset == -1)
+            int createFileARefOffset = PAT_CreateFileA_CALL.Find( data );
+            if ( createFileARefOffset == -1 )
             {
-                throw new IOException("Failed to find CreateFileA reference index!");
+                throw new IOException( "Failed to find CreateFileA reference index!" );
             }
-            int createFileAOffset = BitConverter.ToInt32(data, createFileARefOffset) - (int)league.Base;
+            int createFileAOffset = BitConverter.ToInt32( data , createFileARefOffset ) - ( int ) league.Base;
 
-            int returnAddressOffset = PAT_ReturnAddress.Find(data);
-            if (returnAddressOffset == -1)
+            int returnAddressOffset = PAT_ReturnAddress.Find( data );
+            if ( returnAddressOffset == -1 )
             {
-                throw new IOException("Failed to find ReturnAddress!");
+                throw new IOException( "Failed to find ReturnAddress!" );
             }
 
-            int freePointerOffsetIndex = PAT_FreePointerOffset.Find(data);
-            if (freePointerOffsetIndex == -1)
+            int freePointerOffsetIndex = PAT_FreePointerOffset.Find( data );
+            if ( freePointerOffsetIndex == -1 )
             {
-                throw new IOException("Failed to find FreePointer!");
+                throw new IOException( "Failed to find FreePointer!" );
             }
-            int freePointerOffset = BitConverter.ToInt32(data, freePointerOffsetIndex) - (int)league.Base;
+            int freePointerOffset = BitConverter.ToInt32( data , freePointerOffsetIndex ) - ( int ) league.Base;
             int freeFunctionOffset = freePointerOffsetIndex + OFF_FreeFunctionOffset;
 
             this.Checksum = checksum;
-            this.CreateFileARefOffset = (uint)createFileARefOffset;
-            this.CreateFileAOffset = (uint)createFileAOffset;
-            this.ReturnAddressOffset = (uint)returnAddressOffset;
-            this.FreePointerOffset = (uint)freePointerOffset;
-            this.FreeFunctionOffset = (uint)freeFunctionOffset;
+            this.CreateFileARefOffset = ( uint ) createFileARefOffset;
+            this.CreateFileAOffset = ( uint ) createFileAOffset;
+            this.ReturnAddressOffset = ( uint ) returnAddressOffset;
+            this.FreePointerOffset = ( uint ) freePointerOffset;
+            this.FreeFunctionOffset = ( uint ) freeFunctionOffset;
             this.PrintConfig();
         }
 
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+        [StructLayout( LayoutKind.Sequential , CharSet = CharSet.Ansi )]
         private struct ImportTrampoline
         {
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 64)]
+            [MarshalAs( UnmanagedType.ByValArray , SizeConst = 64 )]
             byte[] Data;
 
-            public ImportTrampoline(uint address)
+            public ImportTrampoline( uint address )
             {
-                Data = new byte[] { 0xB8, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xE0, };
-                byte[] addressData = BitConverter.GetBytes(address);
-                Array.Copy(addressData, 0, Data, 1, 4);
-                Array.Resize(ref Data, 64);
+                Data = new byte[] { 0xB8 , 0x00 , 0x00 , 0x00 , 0x00 , 0xFF , 0xE0 , };
+                byte[] addressData = BitConverter.GetBytes( address );
+                Array.Copy( addressData , 0 , Data , 1 , 4 );
+                Array.Resize( ref Data , 64 );
             }
         }
 
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+        [StructLayout( LayoutKind.Sequential , CharSet = CharSet.Ansi )]
         private struct Payload
         {
             uint OriginalCreateFileAPointer;
@@ -257,35 +248,35 @@ namespace LoLCustomSharp
             uint FindReturnAddress;
             uint HookReturnAddress;
 
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 128)]
+            [MarshalAs( UnmanagedType.ByValArray , SizeConst = 128 )]
             byte[] HookCreateFileA;
 
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 128)]
+            [MarshalAs( UnmanagedType.ByValArray , SizeConst = 128 )]
             byte[] HookFree;
 
-            [MarshalAs(UnmanagedType.Struct)]
+            [MarshalAs( UnmanagedType.Struct )]
             ImportTrampoline OriginalCreateFileATrampoline;
 
-            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+            [MarshalAs( UnmanagedType.ByValTStr , SizeConst = 256 )]
             string PrefixCreateFileA;
 
-            public uint HookCreateFileAPointer(uint payloadPointer)
+            public uint HookCreateFileAPointer( uint payloadPointer )
             {
-                return payloadPointer + (uint)Marshal.OffsetOf<Payload>(nameof(HookCreateFileA));
+                return payloadPointer + ( uint ) Marshal.OffsetOf<Payload>( nameof( HookCreateFileA ) );
             }
 
-            public uint HookFreePointer(uint payloadPointer)
+            public uint HookFreePointer( uint payloadPointer )
             {
-                return payloadPointer + (uint)Marshal.OffsetOf<Payload>(nameof(HookFree));
+                return payloadPointer + ( uint ) Marshal.OffsetOf<Payload>( nameof( HookFree ) );
             }
 
-            public Payload(uint payloadPointer, ImportTrampoline originalCreateFileATrampoline, string prefix, uint originalFreePointer, uint findReturnAddress)
+            public Payload( uint payloadPointer , ImportTrampoline originalCreateFileATrampoline , string prefix , uint originalFreePointer , uint findReturnAddress )
             {
                 OriginalCreateFileATrampoline = originalCreateFileATrampoline;
-                OriginalCreateFileAPointer = payloadPointer + (uint)Marshal.OffsetOf<Payload>(nameof(OriginalCreateFileATrampoline));
+                OriginalCreateFileAPointer = payloadPointer + ( uint ) Marshal.OffsetOf<Payload>( nameof( OriginalCreateFileATrampoline ) );
 
                 PrefixCreateFileA = prefix;
-                PrefixCreateFileAPointer = payloadPointer + (uint)Marshal.OffsetOf<Payload>(nameof(PrefixCreateFileA));
+                PrefixCreateFileAPointer = payloadPointer + ( uint ) Marshal.OffsetOf<Payload>( nameof( PrefixCreateFileA ) );
 
                 OriginalFreePointer = originalFreePointer;
                 FindReturnAddress = findReturnAddress;
@@ -308,7 +299,7 @@ namespace LoLCustomSharp
                     0x08, 0xff, 0x13, 0x5e, 0x5f, 0x5b, 0xc9, 0xc2,
                     0x1c, 0x00
                 };
-                Array.Resize(ref HookCreateFileA, 128);
+                Array.Resize( ref HookCreateFileA , 128 );
                 HookFree = new byte[]
                 {
                     0xc8, 0x00, 0x00, 0x00, 0x53, 0x56, 0xe8, 0x00,
@@ -319,11 +310,11 @@ namespace LoLCustomSharp
                     0x73, 0x10, 0x89, 0x30, 0x8b, 0x43, 0x08, 0x5e,
                     0x5b, 0xc9, 0xff, 0xe0
                 };
-                Array.Resize(ref HookFree, 128);
+                Array.Resize( ref HookFree , 128 );
             }
         }
 
-        public void Patch(LeagueProcess league)
+        public void Patch( LeagueProcess league )
         {
             uint createFileARefPointer = this.CreateFileARefOffset + league.Base;
             uint createFileAPointer = this.CreateFileAOffset + league.Base;
@@ -332,32 +323,32 @@ namespace LoLCustomSharp
             uint freeFunction = this.FreeFunctionOffset + league.Base;
 
             // wait untill CreateFileA has been used and unpacmaned
-            league.WaitPointerEquals(createFileARefPointer, createFileAPointer);
+            league.WaitPointerEquals( createFileARefPointer , createFileAPointer );
             // wait until free pointer has been set
-            league.WaitPointerNonZero(freePointer);
+            league.WaitPointerNonZero( freePointer );
 
             // read trampoline shellcode that league creates for CreateFileA
-            uint createFileATrampolinePointer = league.Read<uint>(createFileAPointer);
-            ImportTrampoline originalCreateFileATrampoline = league.Read<ImportTrampoline>(createFileATrampolinePointer);
+            uint createFileATrampolinePointer = league.Read<uint>( createFileAPointer );
+            ImportTrampoline originalCreateFileATrampoline = league.Read<ImportTrampoline>( createFileATrampolinePointer );
 
-            uint payloadPointer = league.AllocateMemory(0x1000);
+            uint payloadPointer = league.AllocateMemory( 0x1000 );
             Payload payload = new Payload(
-                payloadPointer: payloadPointer,
-                originalCreateFileATrampoline: originalCreateFileATrampoline,
-                prefix: PrefixNormalized,
-                originalFreePointer: freeFunction,
+                payloadPointer: payloadPointer ,
+                originalCreateFileATrampoline: originalCreateFileATrampoline ,
+                prefix: PrefixNormalized ,
+                originalFreePointer: freeFunction ,
                 findReturnAddress: returnAddress
                 );
-            uint hookCreateFileAPointer = payload.HookCreateFileAPointer(payloadPointer);
-            uint hookFreePointer = payload.HookFreePointer(payloadPointer);
-            ImportTrampoline hookCreateFileATrampoline = new ImportTrampoline(hookCreateFileAPointer);
+            uint hookCreateFileAPointer = payload.HookCreateFileAPointer( payloadPointer );
+            uint hookFreePointer = payload.HookFreePointer( payloadPointer );
+            ImportTrampoline hookCreateFileATrampoline = new ImportTrampoline( hookCreateFileAPointer );
 
-            league.Write(payloadPointer, payload);
-            league.MarkMemoryExecutable(payloadPointer, 0x1000);
+            league.Write( payloadPointer , payload );
+            league.MarkMemoryExecutable( payloadPointer , 0x1000 );
 
             // write hooks
-            league.Write(freePointer, hookFreePointer);
-            league.Write(createFileATrampolinePointer, hookCreateFileATrampoline);
+            league.Write( freePointer , hookFreePointer );
+            league.Write( createFileATrampolinePointer , hookCreateFileATrampoline );
         }
     }
 }
