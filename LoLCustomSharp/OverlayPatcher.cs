@@ -61,55 +61,50 @@ namespace LoLCustomSharp
             this.Prefix = overlayFolder;
             this._messageCallback = messageCallback;
             this._errorCallback = errorCallback;
-
             this._thread = new Thread( () =>
             {
-                 try
-                 {
-                     messageCallback?.Invoke( "Starting patcher" );
-                     this.PrintConfig();
-                     messageCallback?.Invoke( "Looking for league process..." );
-
-                     while ( true )
-                     {
-                         Process process = GetLeagueProcess();
-                         if ( process == null ) continue;
-
-                         messageCallback?.Invoke( "Found League process" );
-
-                         bool offsetsUpdated = false;
-                         using ( LeagueProcess league = new LeagueProcess( process ) )
-                         {
-                             bool needsUpdate = NeedsUpdate( league );
-
-                             if ( process.WaitForInputIdle() )
-                             {
-                                 if ( needsUpdate )
-                                 {
-                                     messageCallback?.Invoke( "Updating offsets" );
-
-                                     UpdateOffsets( league );
-                                     offsetsUpdated = true;
-                                     messageCallback?.Invoke( "Offsets updated" );
-                                 }
-
-                                 messageCallback?.Invoke( "Patching League..." );
-                                 Patch( league );
-                             } else
-                                 messageCallback?.Invoke( "Failed to wait for idle input from process" );
-                         }
-
-                         if ( offsetsUpdated )
-                             WriteConfig( _configPath );
-
-                         process.WaitForExit();
-                         Thread.Sleep( 1000 );
-                         messageCallback?.Invoke( "Looking for league process..." );
-                     }
-                 } catch ( Exception exception )
-                 {
-                     errorCallback?.Invoke( exception );
-                 }
+                messageCallback?.Invoke( "Starting patcher" );
+                this.PrintConfig();
+                messageCallback?.Invoke( "Looking for league process..." );
+                try
+                {
+                    while ( true )
+                    {
+                        Process process = GetLeagueProcess();
+                        if ( process == null )
+                        {
+                            Thread.Sleep( 3000 );
+                            continue;
+                        }
+                        messageCallback?.Invoke( "Found League process" );
+                        bool offsetsUpdated = false;
+                        using ( LeagueProcess league = new LeagueProcess( process ) )
+                        {
+                            bool needsUpdate = NeedsUpdate( league );
+                            if ( process.WaitForInputIdle() )
+                            {
+                                if ( needsUpdate )
+                                {
+                                    messageCallback?.Invoke( "Updating offsets" );
+                                    UpdateOffsets( league );
+                                    offsetsUpdated = true;
+                                    messageCallback?.Invoke( "Offsets updated" );
+                                }
+                                messageCallback?.Invoke( "Patching League..." );
+                                Patch( league );
+                            } else
+                                messageCallback?.Invoke( "Failed to wait for idle input from process" );
+                        }
+                        if ( offsetsUpdated )
+                            WriteConfig( _configPath );
+                        process.WaitForExit();
+                        Thread.Sleep( 1000 );
+                        messageCallback?.Invoke( "Looking for league process..." );
+                    }
+                } catch( Exception exception )
+                {
+                    errorCallback?.Invoke( exception );
+                }
             } );
 
             this._thread.IsBackground = true; //Thread needs to be background so it closes when the parent process dies
@@ -128,12 +123,18 @@ namespace LoLCustomSharp
 
         private Process GetLeagueProcess()
         {
-            foreach ( Process process in Process.GetProcessesByName( "League of Legends" ) )
+            try
             {
-                var mainModule = process.MainModule;
-                if ( mainModule.ModuleName.Equals( "League of Legends.exe" )
-                    && _exeLocation.Equals( Path.GetDirectoryName( mainModule.FileName ) ) )
-                    return process;
+                foreach ( Process process in Process.GetProcessesByName( "League of Legends" ) )
+                {
+                    ProcessModule _module = process.MainModule;
+                    if ( _module.ModuleName == "League of Legends.exe" && 
+                            _exeLocation == Path.GetDirectoryName( _module.FileName ) )
+                        return process;
+                }
+            } catch ( Exception exception)
+            {
+                _errorCallback?.Invoke( exception );
             }
             return null;
         }
