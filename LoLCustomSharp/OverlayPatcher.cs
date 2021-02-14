@@ -99,12 +99,12 @@ namespace LoLCustomSharp
                             WriteConfig( _configPath );
                         process.WaitForExit();
                         Thread.Sleep( 1000 );
-                        messageCallback?.Invoke( "Looking for league process..." );
                     }
                 } catch( Exception exception )
                 {
                     errorCallback?.Invoke( exception );
                 }
+                messageCallback?.Invoke( "Looking for league process..." );
             } );
 
             this._thread.IsBackground = true; //Thread needs to be background so it closes when the parent process dies
