@@ -99,12 +99,12 @@ namespace LoLCustomSharp
                             WriteConfig( _configPath );
                         process.WaitForExit();
                         Thread.Sleep( 1000 );
+                        messageCallback?.Invoke( "Looking for league process..." );
                     }
                 } catch( Exception exception )
                 {
                     errorCallback?.Invoke( exception );
                 }
-                messageCallback?.Invoke( "Looking for league process..." );
             } );
 
             this._thread.IsBackground = true; //Thread needs to be background so it closes when the parent process dies
@@ -123,18 +123,20 @@ namespace LoLCustomSharp
 
         private Process GetLeagueProcess()
         {
-            try
+            foreach ( Process process in Process.GetProcessesByName( "League of Legends" ) )
             {
-                foreach ( Process process in Process.GetProcessesByName( "League of Legends" ) )
+                if ( process.ProcessName == "League of Legends" )
                 {
                     ProcessModule _module = process.MainModule;
-                    if ( _module.ModuleName == "League of Legends.exe" && 
-                            _exeLocation == Path.GetDirectoryName( _module.FileName ) )
+                    if ( _module.ModuleName == "League of Legends.exe" )
+                    {
+                        string _processlocation = Path.GetDirectoryName( _module.FileName );
+                        if ( _exeLocation != _processlocation )
+                            throw new Exception( 
+                                $"Are you using a wrong profile? Profile LoL Location = {_exeLocation} , Process Location = {_processlocation} " );
                         return process;
+                    }
                 }
-            } catch ( Exception exception)
-            {
-                _errorCallback?.Invoke( exception );
             }
             return null;
         }
